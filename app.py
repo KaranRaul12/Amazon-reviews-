@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datasets import load_dataset
-import itertools
 
 # --------------------------------------------------
 # PAGE CONFIG
@@ -32,10 +30,10 @@ body { background-color: #F4F6F8; }
 
 .metric-card {
     padding: 18px;
-    background: white !important;
-    border-radius: 14px !important;
-    box-shadow: 0 3px 10px rgba(0,0,0,0.10) !important;
-    text-align: center !important;
+    background: white;
+    border-radius: 14px;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.10);
+    text-align: center;
 }
 
 .product-card {
@@ -57,62 +55,17 @@ body { background-color: #F4F6F8; }
 """, unsafe_allow_html=True)
 
 # --------------------------------------------------
-# CATEGORY MAPPING
-# --------------------------------------------------
-CATEGORY_MAP = {
-    "Books": "Books",
-    "Electronics": "Electronics",
-    "Clothing": "Clothing_Shoes_and_Jewelry"
-}
-
-# --------------------------------------------------
-# STREAMING DATA LOADER
-# --------------------------------------------------
-@st.cache_data(show_spinner=True)
-def load_amazon_sample(category_name, n=500):
-    ds = load_dataset(
-        "McAuley-Lab/Amazon-Reviews-2023-parquet",
-        name=category_name,
-        split="train",
-        streaming=True
-    )
-    sample = list(itertools.islice(ds, n))
-    return pd.DataFrame(sample)
-
-# --------------------------------------------------
-# SIDEBAR CONTROLS
-# --------------------------------------------------
-st.sidebar.title("⚙️ Controls")
-
-category = st.sidebar.selectbox(
-    "Choose Category",
-    ["Books", "Electronics", "Clothing"]
-)
-
-search_query = st.sidebar.text_input(
-    "🔍 Search Product Title"
-)
-
-# --------------------------------------------------
 # LOAD DATA
 # --------------------------------------------------
-raw_df = load_amazon_sample(CATEGORY_MAP[category], n=500)
+@st.cache_data
+def load_data():
+    df = pd.read_csv("master_dataset.csv")
+    return df
+
+raw_df = load_data()
 
 # --------------------------------------------------
-# CLEAN / NORMALIZE COLUMNS
-# --------------------------------------------------
-if "title" in raw_df.columns:
-    raw_df.rename(columns={"title": "product_title"}, inplace=True)
-
-if "reviewText" in raw_df.columns:
-    raw_df.rename(columns={"reviewText": "review_text"}, inplace=True)
-
-raw_df["rating"] = raw_df["rating"].astype(float)
-
-raw_df["product_title"] = raw_df["product_title"].fillna("Unknown Product")
-
-# --------------------------------------------------
-# SENTIMENT ASSIGNMENT
+# SENTIMENT MAPPING
 # --------------------------------------------------
 raw_df["sentiment"] = raw_df["rating"].apply(
     lambda r: "Positive" if r >= 4 else "Neutral" if r == 3 else "Negative"
@@ -122,18 +75,33 @@ sentiment_map = {"Positive": 1, "Neutral": 0, "Negative": -1}
 raw_df["sentiment_score"] = raw_df["sentiment"].map(sentiment_map)
 
 # --------------------------------------------------
-# AGGREGATED PRODUCT METRICS
+# PRODUCT LEVEL AGGREGATION
 # --------------------------------------------------
-product_df = raw_df.groupby("product_title").agg(
+product_df = raw_df.groupby(["product_title", "domain"]).agg(
     avg_rating=("rating", "mean"),
     total_reviews=("rating", "count"),
     avg_sentiment=("sentiment_score", "mean")
 ).reset_index()
 
 # --------------------------------------------------
-# FILTER BY SEARCH
+# SIDEBAR
+# --------------------------------------------------
+st.sidebar.title("⚙️ Filters")
+
+domain = st.sidebar.selectbox(
+    "Choose Category:",
+    ["All", "Books", "Electronics", "Clothing"]
+)
+
+search_query = st.sidebar.text_input("🔍 Search Product")
+
+# --------------------------------------------------
+# FILTERING LOGIC
 # --------------------------------------------------
 filtered_df = product_df.copy()
+
+if domain != "All":
+    filtered_df = filtered_df[filtered_df["domain"] == domain]
 
 if search_query:
     filtered_df = filtered_df[
@@ -143,8 +111,8 @@ if search_query:
 # --------------------------------------------------
 # HEADER
 # --------------------------------------------------
-st.markdown(f"<div class='header'>🛒 Amazon Review Intelligence — {category}</div>", unsafe_allow_html=True)
-st.write("Real Amazon reviews analysis using the McAuley Lab 2023 Parquet Dataset")
+st.markdown("<div class='header'>🛒 Amazon Review Intelligence Dashboard</div>", unsafe_allow_html=True)
+st.write("Analysis of Books, Electronics and Clothing • Sentiment • Review Summary • Recommendation Engine")
 
 # --------------------------------------------------
 # KPI CARDS
@@ -158,18 +126,18 @@ with c1:
 
 with c2:
     st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-    st.metric("Avg Rating", round(product_df["avg_rating"].mean(), 2))
+    st.metric("Average Rating", round(product_df["avg_rating"].mean(), 2))
     st.markdown("</div>", unsafe_allow_html=True)
 
 with c3:
     st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-    st.metric("Total Reviews Sampled", len(raw_df))
+    st.metric("Total Reviews", len(raw_df))
     st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("---")
 
 # --------------------------------------------------
-# PRODUCT DISPLAY
+# PRODUCT CARDS
 # --------------------------------------------------
 st.subheader("📦 Products")
 
@@ -183,7 +151,7 @@ else:
         # Product Title
         st.markdown(f"## {row['product_title']}")
 
-        # Ratings
+        # Metrics
         st.metric("⭐ Average Rating", round(row["avg_rating"], 2))
         st.caption(f"Total Reviews: {row['total_reviews']}")
 
@@ -192,10 +160,11 @@ else:
         st.progress((row["avg_sentiment"] + 1) / 2)
 
         # Sentiment Breakdown
-        pr = raw_df[raw_df["product_title"] == row["product_title"]]
-        pos = (pr["sentiment"] == "Positive").sum()
-        neu = (pr["sentiment"] == "Neutral").sum()
-        neg = (pr["sentiment"] == "Negative").sum()
+        product_reviews = raw_df[raw_df["product_title"] == row["product_title"]]
+
+        pos = (product_reviews["sentiment"] == "Positive").sum()
+        neu = (product_reviews["sentiment"] == "Neutral").sum()
+        neg = (product_reviews["sentiment"] == "Negative").sum()
 
         sentiment_data = pd.DataFrame({
             "Sentiment": ["Positive", "Neutral", "Negative"],
@@ -204,27 +173,33 @@ else:
 
         st.markdown("<div class='section-title'>📊 Sentiment Breakdown</div>", unsafe_allow_html=True)
 
-        fig = px.pie(sentiment_data, values="Count", names="Sentiment")
-        st.plotly_chart(fig, use_container_width=True)
+        fig_pie = px.pie(sentiment_data, values="Count", names="Sentiment")
+        st.plotly_chart(fig_pie, use_container_width=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
 
+
 # --------------------------------------------------
-# SMART CHATBOT
+# CHATBOT
 # --------------------------------------------------
 st.markdown("---")
 st.subheader("🤖 Smart Recommendation Assistant")
 
 user_q = st.text_input(
-    "Ask something like:",
-    placeholder="Best phone? Best fiction book? Comfortable shirts?"
+    "Ask something like: ",
+    placeholder="Best phone? Best book? Best clothing item?"
 )
 
 if user_q:
-    top_item = product_df.sort_values("avg_rating", ascending=False).iloc[0]
+    # Pick best product in the chosen domain
+    if domain == "All":
+        best = product_df.sort_values("avg_rating", ascending=False).iloc[0]
+    else:
+        best = product_df[product_df["domain"] == domain].sort_values("avg_rating", ascending=False).iloc[0]
+
     st.success(
         f"### Recommended Product\n"
-        f"**{top_item['product_title']}**\n"
-        f"- ⭐ Rating: {round(top_item['avg_rating'], 2)}\n"
-        f"- 📦 Category: {category}"
+        f"**{best['product_title']}**\n"
+        f"- ⭐ Rating: {round(best['avg_rating'], 2)}\n"
+        f"- 🛒 Category: {best['domain']}"
     )
