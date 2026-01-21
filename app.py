@@ -171,10 +171,11 @@ else:
             "Count": [pos, neu, neg]
         })
 
-        st.markdown("<div class='section-title'>📊 Sentiment Breakdown</div>", unsafe_allow_html=True)
+       # Sentiment Breakdown Section
+st.markdown("<div class='section-title'>📊 Sentiment Breakdown</div>", unsafe_allow_html=True)
 
-        fig_pie = px.pie(sentiment_data, values="Count", names="Sentiment")
-        st.plotly_chart(fig_pie, use_container_width=True)
+fig_pie = px.pie(sentiment_data, values="Count", names="Sentiment")
+st.plotly_chart(fig_pie, use_container_width=True, key=f"pie_{row['product_title']}")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
